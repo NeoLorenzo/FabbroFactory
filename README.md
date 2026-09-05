@@ -1,7 +1,12 @@
 # Ariadne
 
-Personal operating workspace built with Next.js and Supabase. Ariadne combines strategy,
-projects, tasks, progress signals, and a private scoring lab in one installable web app.
+Personal strategy-to-action operating workspace built with Next.js and Supabase. Ariadne focuses on
+direction, strategic objectives, outcome goals, projects, tasks, and progress signals.
+
+Personal measurement and benchmarking are owned by the separate
+[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos) application. Ariadne and Kleos currently
+share one physical Supabase project by design, while retaining separate application and persistence
+ownership boundaries.
 
 ## Current features
 
@@ -9,10 +14,19 @@ projects, tasks, progress signals, and a private scoring lab in one installable 
 - Notice board generated from project and publication signals
 - Coding project management with GitHub repository synchronization
 - Task planning with subtasks, scheduling, manual 0–4 priority, directional-goal links, and time-pressure indicators
-- Private GOAT Lab scoring workspace
 - Google OAuth through Supabase
 - Local-first project and task data with authenticated cloud synchronization
 - PWA support and static deployment through GitHub Pages
+
+## Kleos extraction status
+
+GOAT Lab has been extracted into Kleos as an independent application. The existing Ariadne `/lab`
+route is retained temporarily as a migration fallback until the production Kleos Google OAuth path
+and representative private-data workflows have been confirmed interactively. It is not part of
+Ariadne's long-term product scope.
+
+Existing `goat_*` tables remain physically located in the shared Supabase project. Their schema,
+RLS policy definitions, and future persistence changes are now owned by the Kleos repository.
 
 ## Tech stack
 
@@ -46,23 +60,29 @@ Only the public Supabase URL and anon key are used client-side.
 
 ## Supabase setup
 
-Run [`supabase/schema.sql`](supabase/schema.sql) in the Supabase SQL Editor. The schema provides:
+Run [`supabase/schema.sql`](supabase/schema.sql) in the Supabase SQL Editor for Ariadne-owned
+persistence. The schema provides:
 
 - user task and task-backup storage
 - user project and project-backup storage
 - directions and user-managed direction revisions
 - strategic objectives
 - count-based outcome goals, bare-minimum thresholds, automatic deadline outcomes, and user-managed revisions
-- private GOAT Lab entries
 
-All private tables use row-level security keyed by `auth.uid()`.
+Kleos-owned `goat_*` persistence is documented and maintained in
+[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos/tree/main/supabase). During the migration
+window, compatibility definitions may still remain in Ariadne's schema file; they should not be
+used as the source of truth for future Kleos changes.
+
+All private tables use row-level security keyed by authenticated ownership.
 
 ## OAuth configuration
 
 In Supabase Auth URL Configuration:
 
-- Set **Site URL** to the deployed application URL.
-- Add local and deployed URLs under **Additional Redirect URLs**.
+- Set **Site URL** to the deployed Ariadne application URL.
+- Add local and deployed Ariadne URLs under **Additional Redirect URLs**.
+- Because the Supabase project is shared, also allow the production/local redirect URLs used by Kleos.
 - A typical local redirect is `http://localhost:3000/`.
 
 ## GitHub Pages deployment
@@ -96,9 +116,10 @@ Required GitHub Actions secrets:
 
 ## Privacy boundary
 
-- GitHub Pages and this repository contain only the downloadable application client.
+- GitHub Pages and this repository contain only the downloadable Ariadne application client.
 - The application mounts only for the authorized Google account.
-- Private records live in Supabase and are protected by owner-only Row Level Security policies.
+- Private Ariadne records live in Supabase and are protected by owner-only Row Level Security policies.
+- Kleos uses the same physical Supabase project but owns its own `goat_*` persistence boundary.
 - Supabase secret and service-role keys must never be committed or exposed to the browser.
 - Run `npm run check:privacy` before deployment to scan tracked source and the static export.
 
