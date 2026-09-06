@@ -1,10 +1,11 @@
 # Ariadne GitHub App synchronization
 
-Ariadne's GitHub integration uses GitHub App installation authentication on the Supabase backend. Browser-held GitHub OAuth tokens are a migration fallback only and should be removed after the backend path is verified in production.
+Ariadne's GitHub integration uses GitHub App installation authentication on the Supabase backend. GitHub repository synchronization no longer depends on browser OAuth tokens or a manual sync button.
 
 ## GitHub App
 
 - App ID: `4850890`
+- Installation ID: `159523918`
 - Webhook endpoint: `https://jhpsggjphoqyygthqfki.supabase.co/functions/v1/github-sync`
 - Setup URL: `https://neolorenzo.github.io/Ariadne/coding/`
 
@@ -31,6 +32,8 @@ The deployed `github-sync` Edge Function requires these custom secrets:
 
 Never commit the private key, webhook secret, or cron secret to this repository. Configure them in Supabase Edge Function secrets.
 
+The database Vault contains the matching cron secret under `github_sync_cron_secret` so `pg_cron` can authenticate scheduled reconciliation calls without embedding the secret in SQL.
+
 ## One-time installation link flow
 
 1. Install the Ariadne GitHub App on the desired GitHub account/repositories.
@@ -50,29 +53,45 @@ The backend treats GitHub repository IDs as stable identity and maps them to Ari
 
 The backend owns GitHub-derived repository fields while preserving Ariadne-specific project metadata and all non-GitHub projects. Updates use the existing `user_projects.version` optimistic-concurrency mechanism.
 
-The existing Ariadne repository inclusion rule is preserved during migration: only non-archived repositories with at least one star are synchronized into the visible GitHub project set.
+The existing Ariadne repository inclusion rule is preserved: only non-archived repositories with at least one star are synchronized into the visible GitHub project set.
+
+The browser Programming module is read-only with respect to repository state. It reads the canonical `user_projects` snapshot from Supabase, maintains a local/cache copy for fast rendering, and listens for Supabase realtime project-row updates when available. It does not call GitHub directly and does not write GitHub-derived repository state back to Supabase.
 
 ## Automatic updates
 
+### Real-time path
+
 The webhook endpoint verifies GitHub's `X-Hub-Signature-256` HMAC before processing events. Repository and push events trigger a full installation reconciliation. This keeps implementation deterministic and idempotent while the dataset is small.
 
-A scheduled `reconcile-all` call should also run periodically as a failsafe after `GITHUB_SYNC_CRON_SECRET` is configured. A daily schedule is sufficient initially.
+### Reconciliation failsafe
+
+Supabase `pg_cron` runs `github-sync` with `reconcile-all` every six hours:
+
+`0 */6 * * *`
+
+The cron request reads its authentication secret from Vault. This repairs missed webhooks or any other drift without requiring an active browser session.
 
 ## Production verification
 
+Verified in production on 2026-09-06:
+
 - GitHub App installation `159523918` is linked to the Ariadne owner account.
 - The first server-side reconciliation completed successfully with `sync_status=ok`.
-- The reconciler produced the expected eight GitHub-backed projects in `user_projects` without using the legacy manual sync button.
-- This documentation commit is intentionally used as the first post-link `push` webhook test.
+- The reconciler produced the expected eight GitHub-backed projects in `user_projects` without using browser GitHub OAuth.
+- Multiple real `push` webhooks updated `last_webhook_at`, triggered reconciliation, and advanced Ariadne's stored `lastCommitAt` automatically.
+- The scheduled reconciliation request returned HTTP 200 and reconciled all eight repositories successfully using the rotated cron secret.
+- The cron job `github-sync-reconcile-all` is active on a six-hour schedule.
 
-## Migration cutoff
+A repository-description/archive mutation was not performed automatically during verification because the connected GitHub control surface available to this implementation session does not expose repository-settings writes, and the Ariadne GitHub App intentionally has read-only repository permissions. The `repository` webhook handler uses the same verified signature, installation lookup, and full-reconciliation path as `push`; metadata changes will therefore be picked up by either the repository webhook or, at worst, the six-hour reconciliation failsafe.
 
-Do not remove the current browser OAuth/manual `Sync GitHub Repos` implementation until all of the following have been verified:
+## Legacy path removed
 
-1. the GitHub App installation links successfully;
-2. the first backend reconciliation produces the same repository set as the existing sync;
-3. a push webhook updates `lastCommitAt` without user action;
-4. a repository metadata/archive change is reflected automatically;
-5. scheduled reconciliation succeeds independently of an active browser session.
+The former browser-based GitHub integration has been retired:
 
-After those checks pass, remove the browser GitHub provider-token helper and demote/remove the normal sync button.
+- no browser GitHub OAuth sign-in for repository synchronization;
+- no GitHub provider token persisted in `sessionStorage`;
+- no direct browser call to `/user/repos`;
+- no normal `Sync GitHub Repos` button;
+- no client-side reconciliation writer for GitHub repository state.
+
+GitHub App webhooks plus scheduled server-side reconciliation are now the canonical synchronization architecture.
