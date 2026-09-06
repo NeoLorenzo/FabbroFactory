@@ -24,7 +24,7 @@ jobs:
           deno-version: v2.x
 
       - name: Type-check GitHub sync Edge Function
-        run: deno check supabase/functions/github-sync/index.ts
+        run: deno check --node-modules-dir=auto supabase/functions/github-sync/index.ts
 
       - name: Setup Node
         uses: actions/setup-node@v4
