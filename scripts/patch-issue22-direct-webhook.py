@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# One-off branch patch used to validate direct GitHub issue webhook handling.
 path = Path("supabase/functions/github-sync/index.ts")
 text = path.read_text()
 
