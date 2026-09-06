@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import AuthPanel from "@/components/AuthPanel";
+import GitHubAppInstallationLinker from "@/components/GitHubAppInstallationLinker";
 import { useIsMobileExperience } from "@/lib/device/useIsMobileExperience";
 
 const NAV_ITEMS = [
@@ -46,6 +47,7 @@ export default function AppShell({ activeNavItem = "", hideMobileNav = false, ch
         !isMobileExperience && !isNavCollapsed ? " is-nav-expanded" : ""
       }${isMobileExperience && hideMobileNav ? " is-mobile-nav-hidden" : ""}`}
     >
+      <GitHubAppInstallationLinker />
       <div className="page-container">
         <div className="app-layout">
           <div className={`left-rail ${isNavCollapsed ? "is-collapsed" : "is-expanded"}`}>

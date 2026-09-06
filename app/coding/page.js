@@ -7,7 +7,8 @@ export default function CodingCompatibilityPage() {
     const basePath = String(process.env.NEXT_PUBLIC_BASE_PATH || "")
       .trim()
       .replace(/^\/+|\/+$/g, "");
-    window.location.replace(`${basePath ? `/${basePath}` : ""}/`);
+    const query = window.location.search || "";
+    window.location.replace(`${basePath ? `/${basePath}` : ""}/${query}`);
   }, []);
 
   return null;
