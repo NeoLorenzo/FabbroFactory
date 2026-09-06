@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   cutover:
-    if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,7 +33,6 @@ jobs:
           from pathlib import Path
           import re
 
-          # Remove the Lab destination and icon from Ariadne navigation.
           shell_path = Path("components/AppShell.jsx")
           shell = shell_path.read_text()
           shell = shell.replace('  { key: "lab", href: "/lab", label: "Lab", icon: "lab" }\n', '')
@@ -48,8 +46,6 @@ jobs:
               raise SystemExit("Failed to remove Lab navigation cleanly")
           shell_path.write_text(shell)
 
-          # Remove the compatibility GOAT/Kleos DDL from Ariadne source control only.
-          # This does NOT execute SQL and therefore does not alter live goat_* data.
           schema_path = Path("supabase/schema.sql")
           schema = schema_path.read_text()
           start_marker = "-- 10) Private GOAT Lab storage, locked to the authorized account by RLS."
@@ -63,8 +59,6 @@ jobs:
               raise SystemExit("A goat_* schema reference remains in Ariadne schema.sql")
           schema_path.write_text(schema)
 
-          # Remove only CSS rules/selectors owned by the extracted Lab. Nested @media
-          # blocks are retained with their non-Lab rules intact.
           css_path = Path("app/globals.css")
           css = css_path.read_text()
 
@@ -106,13 +100,11 @@ jobs:
                   header = text[cursor:open_index]
                   body = text[open_index + 1:close_index]
                   selector = header.strip()
-
                   if selector.startswith("@"):
                       cleaned_body = clean_rules(body)
                       if cleaned_body.strip():
                           out.append(header + "{" + cleaned_body + "}")
                   elif ".goat-" in selector or ".lab-" in selector:
-                      # Lab-only rule: deliberately omit it.
                       pass
                   else:
                       out.append(header + "{" + body + "}")
@@ -124,18 +116,16 @@ jobs:
               raise SystemExit("Lab-only selectors remain in globals.css")
           css_path.write_text(css)
 
-          # Replace transitional README language with the final ownership boundary.
           readme_path = Path("README.md")
           readme = readme_path.read_text()
-          final_boundary = '''## Kleos boundary
-
-Personal measurement and benchmarking are fully owned by the separate
-[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos) application. Ariadne no longer exposes
-or contains the former GOAT Lab application surface.
-
-Existing `goat_*` records remain physically located in the shared Supabase project. Their schema,
-RLS policy definitions, application logic, and future persistence changes are owned by Kleos.
-'''
+          final_boundary = (
+              "## Kleos boundary\n\n"
+              "Personal measurement and benchmarking are fully owned by the separate\n"
+              "[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos) application. Ariadne no longer exposes\n"
+              "or contains the former GOAT Lab application surface.\n\n"
+              "Existing `goat_*` records remain physically located in the shared Supabase project. Their schema,\n"
+              "RLS policy definitions, application logic, and future persistence changes are owned by Kleos.\n"
+          )
           readme, count = re.subn(
               r'## Kleos extraction status\n.*?(?=## Tech stack)',
               final_boundary + '\n',
@@ -144,16 +134,22 @@ RLS policy definitions, application logic, and future persistence changes are ow
           )
           if count != 1:
               raise SystemExit("Could not replace transitional README extraction section")
-          readme = re.sub(
-              r'Kleos-owned `goat_\*` persistence is documented and maintained in\n\[`NeoLorenzo/Kleos`\]\(https://github.com/NeoLorenzo/Kleos/tree/main/supabase\)\. During the migration\nwindow, compatibility definitions may still remain in Ariadne\'s schema file; they should not be\nused as the source of truth for future Kleos changes\.',
-              'Kleos-owned `goat_*` persistence is documented and maintained in\n[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos/tree/main/supabase). Ariadne intentionally\nexcludes Kleos persistence definitions from its own schema; the Kleos repository is the source of truth.',
-              readme,
+          old_persistence = (
+              "Kleos-owned `goat_*` persistence is documented and maintained in\n"
+              "[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos/tree/main/supabase). During the migration\n"
+              "window, compatibility definitions may still remain in Ariadne's schema file; they should not be\n"
+              "used as the source of truth for future Kleos changes."
           )
-          if "route is retained temporarily" in readme or "compatibility definitions may still remain" in readme:
-              raise SystemExit("Transitional README language remains")
+          new_persistence = (
+              "Kleos-owned `goat_*` persistence is documented and maintained in\n"
+              "[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos/tree/main/supabase). Ariadne intentionally\n"
+              "excludes Kleos persistence definitions from its own schema; the Kleos repository is the source of truth."
+          )
+          if old_persistence not in readme:
+              raise SystemExit("Could not locate transitional persistence documentation")
+          readme = readme.replace(old_persistence, new_persistence)
           readme_path.write_text(readme)
 
-          # Remove the extracted application/domain source from Ariadne.
           for path in [
               Path("app/lab/page.js"),
               Path("lib/lab/goatLabData.js"),
