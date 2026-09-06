@@ -1,6 +1,6 @@
 # Ariadne GitHub App synchronization
 
-Ariadne's GitHub integration uses GitHub App installation authentication on the Supabase backend. GitHub repository synchronization no longer depends on browser OAuth tokens or a manual sync button.
+Ariadne's GitHub integration uses GitHub App installation authentication on the Supabase backend. GitHub synchronization does not depend on browser OAuth tokens or a manual sync button.
 
 ## GitHub App
 
@@ -13,11 +13,13 @@ Required repository permissions:
 
 - Metadata: read-only
 - Contents: read-only
+- Issues: read-only
 
 Subscribed repository events:
 
 - Repository
 - Push
+- Issues
 
 GitHub App installation lifecycle events are handled by the backend when GitHub includes an installation ID.
 
@@ -42,8 +44,8 @@ The database Vault contains the matching cron secret under `github_sync_cron_sec
 4. `GitHubAppInstallationLinker` detects `installation_id` after Ariadne authentication.
 5. The client invokes `github-sync` with `{ action: "link", installationId }`.
 6. The backend authenticates as the GitHub App and independently verifies that the supplied installation exists.
-7. The backend records the installation in `github_integrations` and immediately performs a full repository reconciliation.
-8. The callback parameters are removed and Ariadne reloads the canonical `user_projects` snapshot.
+7. The backend records the installation in `github_integrations` and immediately performs a full reconciliation.
+8. The callback parameters are removed and Ariadne reloads canonical Supabase state.
 
 ## Repository reconciliation
 
@@ -53,15 +55,60 @@ The backend treats GitHub repository IDs as stable identity and maps them to Ari
 
 The backend owns GitHub-derived repository fields while preserving Ariadne-specific project metadata and all non-GitHub projects. Updates use the existing `user_projects.version` optimistic-concurrency mechanism.
 
-The existing Ariadne repository inclusion rule is preserved: only non-archived repositories with at least one star are synchronized into the visible GitHub project set.
+The Ariadne repository inclusion rule is also the issue-sync scope: only non-archived repositories with at least one star are treated as tracked GitHub repositories.
 
 The browser Programming module is read-only with respect to repository state. It reads the canonical `user_projects` snapshot from Supabase, maintains a local/cache copy for fast rendering, and listens for Supabase realtime project-row updates when available. It does not call GitHub directly and does not write GitHub-derived repository state back to Supabase.
+
+## GitHub issue → Ariadne task synchronization
+
+Open GitHub issues from tracked repositories are represented directly in the existing `user_tasks.tasks` JSON collection. No parallel task system or issue table is used.
+
+Stable identity is based on GitHub's numeric issue ID:
+
+`github-issue-<github_issue_id>`
+
+GitHub-backed tasks carry bounded provenance metadata:
+
+- `sourceType = "github-issue"`
+- `githubIssueId`
+- `githubRepositoryId`
+- `githubRepositoryFullName`
+- `githubIssueNumber`
+- `githubIssueUrl`
+- `githubIssueState`
+- `githubIssueUpdatedAt`
+
+### Ownership rules
+
+GitHub is authoritative for:
+
+- issue identity;
+- issue title;
+- open/closed state;
+- repository and issue URL metadata.
+
+Ariadne is authoritative for execution metadata:
+
+- priority;
+- description/notes;
+- due date and time;
+- estimated hours;
+- subtasks;
+- other Ariadne-local planning metadata.
+
+A GitHub issue closing marks the same Ariadne task completed. Reopening the issue makes the same task active again. The task is never recreated under a new identity for those lifecycle changes.
+
+Historical closed issues that have never existed as Ariadne tasks are not imported. Once an issue has been represented, later close/reopen changes continue to update that same task.
+
+Backend reconciliation preserves Ariadne-owned fields while refreshing GitHub-owned fields. Frontend conflict reconciliation is also field-aware: `githubIssueUpdatedAt` selects the authoritative GitHub fields while Ariadne's `updatedAt` selects local execution metadata. This prevents an incoming GitHub webhook from erasing a concurrent priority, note, due-date, estimate, or subtask edit.
+
+The Tasks UI treats GitHub-backed tasks as first-class tasks for sorting and prioritization, with a restrained green source accent and direct issue link. Title and completion controls are read-only in Ariadne because those fields are GitHub-owned. GitHub-backed tasks cannot be locally duplicated or deleted.
 
 ## Automatic updates
 
 ### Real-time path
 
-The webhook endpoint verifies GitHub's `X-Hub-Signature-256` HMAC before processing events. Repository and push events trigger a full installation reconciliation. This keeps implementation deterministic and idempotent while the dataset is small.
+The webhook endpoint verifies GitHub's `X-Hub-Signature-256` HMAC before processing events. Repository, push, and issue events trigger a full installation reconciliation. The issue event therefore covers open, edit, close, reopen, and other GitHub issue changes using one idempotent path.
 
 ### Reconciliation failsafe
 
@@ -69,29 +116,30 @@ Supabase `pg_cron` runs `github-sync` with `reconcile-all` every six hours:
 
 `0 */6 * * *`
 
-The cron request reads its authentication secret from Vault. This repairs missed webhooks or any other drift without requiring an active browser session.
+The cron request reads its authentication secret from Vault. Full reconciliation refreshes both repository projects and GitHub-backed tasks, repairing missed webhooks or other drift without requiring an active browser session.
 
 ## Production verification
 
-Verified in production on 2026-09-06:
+Repository synchronization verified in production on 2026-09-06:
 
 - GitHub App installation `159523918` is linked to the Ariadne owner account.
 - The first server-side reconciliation completed successfully with `sync_status=ok`.
 - The reconciler produced the expected eight GitHub-backed projects in `user_projects` without using browser GitHub OAuth.
 - Multiple real `push` webhooks updated `last_webhook_at`, triggered reconciliation, and advanced Ariadne's stored `lastCommitAt` automatically.
+- A live repository-description edit propagated through the `repository` webhook into Supabase automatically.
 - The scheduled reconciliation request returned HTTP 200 and reconciled all eight repositories successfully using the rotated cron secret.
 - The cron job `github-sync-reconcile-all` is active on a six-hour schedule.
 
-A repository-description/archive mutation was not performed automatically during verification because the connected GitHub control surface available to this implementation session does not expose repository-settings writes, and the Ariadne GitHub App intentionally has read-only repository permissions. The `repository` webhook handler uses the same verified signature, installation lookup, and full-reconciliation path as `push`; metadata changes will therefore be picked up by either the repository webhook or, at worst, the six-hour reconciliation failsafe.
+GitHub issue synchronization must receive its own production lifecycle verification after the existing GitHub App installation is granted Issues read-only permission and the Issues webhook event is enabled. The verification should cover initial import, title edit, close, reopen, duplicate prevention, and a full-reconciliation repair.
 
 ## Legacy path removed
 
 The former browser-based GitHub integration has been retired:
 
-- no browser GitHub OAuth sign-in for repository synchronization;
+- no browser GitHub OAuth sign-in for synchronization;
 - no GitHub provider token persisted in `sessionStorage`;
 - no direct browser call to `/user/repos`;
 - no normal `Sync GitHub Repos` button;
 - no client-side reconciliation writer for GitHub repository state.
 
-GitHub App webhooks plus scheduled server-side reconciliation are now the canonical synchronization architecture.
+GitHub App webhooks plus scheduled server-side reconciliation are the canonical synchronization architecture for repositories and issues.
