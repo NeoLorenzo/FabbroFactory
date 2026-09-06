@@ -1,0 +1,64 @@
+name: Validate tracked repository issue guard
+
+on:
+  push:
+    branches: ["issue-22-github-issue-sync"]
+    paths:
+      - "scripts/patch-issue22-tracked-repo-guard.py"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: issue-22-github-issue-sync
+
+      - name: Apply patch
+        run: python3 scripts/patch-issue22-tracked-repo-guard.py
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check Edge Function
+        run: deno check --node-modules-dir=auto supabase/functions/github-sync/index.ts
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run regression tests
+        run: npm test
+
+      - name: Check repository privacy
+        run: npm run check:privacy
+
+      - name: Build static export
+        env:
+          STATIC_EXPORT: "true"
+          NEXT_PUBLIC_BASE_PATH: "/Ariadne"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUBSTACK_ARCHIVE_SYNC_URL: ${{ secrets.NEXT_PUBLIC_SUBSTACK_ARCHIVE_SYNC_URL }}
+        run: npm run build
+
+      - name: Commit source change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/github-sync/index.ts
+          if ! git diff --cached --quiet; then
+            git commit -m "Guard issue webhooks to tracked repositories"
+            git push origin HEAD:issue-22-github-issue-sync
+          fi
