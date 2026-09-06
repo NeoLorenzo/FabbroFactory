@@ -1,4 +1,5 @@
 import { createAppAuth } from "npm:@octokit/auth-app@8.3.1";
+import { buildReconciledIssueTasks, type GitHubIssueSyncRecord } from "./githubIssueTasks.ts";
 
 const AUTHORIZED_EMAIL = "theneolorenzo@gmail.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -26,6 +27,7 @@ type Integration = {
 type GitHubRepo = {
   id: number;
   name?: string;
+  full_name?: string;
   description?: string | null;
   html_url?: string;
   archived?: boolean;
@@ -79,7 +81,7 @@ Deno.serve(async (request) => {
         repositorySelection: String(installation?.repository_selection || "all")
       });
       const result = await reconcileIntegration(integration);
-      return jsonResponse({ integration: result.integration, repoCount: result.repoCount });
+      return jsonResponse({ integration: result.integration, repoCount: result.repoCount, issueCount: result.issueCount });
     }
 
     if (action === "reconcile") {
@@ -88,7 +90,7 @@ Deno.serve(async (request) => {
         return jsonResponse({ error: "GitHub App is not linked." }, 409);
       }
       const result = await reconcileIntegration(integration);
-      return jsonResponse({ integration: result.integration, repoCount: result.repoCount });
+      return jsonResponse({ integration: result.integration, repoCount: result.repoCount, issueCount: result.issueCount });
     }
 
     return jsonResponse({ error: "Unsupported action." }, 400);
@@ -148,6 +150,22 @@ async function handleWebhook(request: Request, event: string) {
     }
   }
 
+  if (event === "issues") {
+    const issueRecord = buildIssueRecordFromWebhook(payload);
+    if (!issueRecord) {
+      return jsonResponse({ ok: true, ignored: "Issue webhook payload was incomplete." });
+    }
+    if (!(await isTrackedRepositoryForUser(integration.user_id, issueRecord.repository.id))) {
+      return jsonResponse({ ok: true, ignored: "Issue repository is not tracked by Ariadne." });
+    }
+    await reconcileTasksForUser(integration.user_id, [issueRecord]);
+    return jsonResponse({
+      ok: true,
+      issueNumber: issueRecord.number,
+      issueState: String(issueRecord.state || "open").toLowerCase()
+    });
+  }
+
   const eventsThatRequireReconciliation = new Set([
     "repository",
     "push",
@@ -159,7 +177,7 @@ async function handleWebhook(request: Request, event: string) {
   }
 
   const result = await reconcileIntegration(integration);
-  return jsonResponse({ ok: true, repoCount: result.repoCount });
+  return jsonResponse({ ok: true, repoCount: result.repoCount, issueCount: result.issueCount });
 }
 
 async function reconcileAllIntegrations() {
@@ -172,7 +190,8 @@ async function reconcileAllIntegrations() {
       results.push({
         installationId: integration.installation_id,
         ok: true,
-        repoCount: result.repoCount
+        repoCount: result.repoCount,
+        issueCount: result.issueCount
       });
     } catch (error) {
       results.push({
@@ -198,15 +217,21 @@ async function reconcileIntegration(integration: Integration) {
     const repos = rawRepos.filter(
       (repo) => Number(repo?.stargazers_count || 0) >= 1 && repo?.archived !== true
     );
+    const issues = await fetchIssuesForRepositories(token, repos);
 
     await reconcileProjectsForUser(integration.user_id, repos);
+    await reconcileTasksForUser(integration.user_id, issues);
     const updatedIntegration = await patchIntegration(integration.user_id, {
       sync_status: "ok",
       last_error: "",
       last_reconciled_at: new Date().toISOString()
     });
 
-    return { integration: updatedIntegration, repoCount: repos.length };
+    return {
+      integration: updatedIntegration,
+      repoCount: repos.length,
+      issueCount: issues.filter((issue) => String(issue.state || "").toLowerCase() === "open").length
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "GitHub reconciliation failed.";
     await patchIntegration(integration.user_id, {
@@ -215,6 +240,43 @@ async function reconcileIntegration(integration: Integration) {
     }).catch(() => null);
     throw error;
   }
+}
+
+async function isTrackedRepositoryForUser(userId: string, repositoryId: number) {
+  const row = await getUserProjects(userId);
+  const projects = Array.isArray(row?.projects) ? row.projects : [];
+  const expectedProjectId = `${GITHUB_PROJECT_PREFIX}${repositoryId}`;
+  return projects.some((project: unknown) =>
+    Boolean(project) &&
+    typeof project === "object" &&
+    String((project as Record<string, unknown>).id || "") === expectedProjectId
+  );
+}
+
+async function reconcileTasksForUser(userId: string, issues: GitHubIssueSyncRecord[]) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const row = await getUserTasks(userId);
+    if (!row) {
+      throw new Error("No user_tasks row exists for the linked Ariadne user.");
+    }
+
+    const currentTasks = Array.isArray(row.tasks) ? row.tasks : [];
+    const nextTasks = buildReconciledIssueTasks(currentTasks, issues);
+    if (JSON.stringify(nextTasks) === JSON.stringify(currentTasks)) {
+      return;
+    }
+
+    const updated = await updateUserTasksIfVersionMatches({
+      userId,
+      expectedVersion: Number(row.version || 1),
+      tasks: nextTasks
+    });
+    if (updated) {
+      return;
+    }
+  }
+
+  throw new Error("Task reconciliation conflicted with concurrent Ariadne writes repeatedly.");
 }
 
 async function reconcileProjectsForUser(userId: string, repos: GitHubRepo[]) {
@@ -364,6 +426,100 @@ async function fetchInstallationRepositories(token: string): Promise<GitHubRepo[
     }
   }
   return repos;
+}
+
+function buildIssueRecordFromWebhook(payload: any): GitHubIssueSyncRecord | null {
+  const issue = payload?.issue;
+  const repository = payload?.repository;
+  if (!issue || issue?.pull_request) {
+    return null;
+  }
+
+  const issueId = parsePositiveInteger(issue?.id);
+  const issueNumber = parsePositiveInteger(issue?.number);
+  const repositoryId = parsePositiveInteger(repository?.id);
+  const repositoryFullName = String(repository?.full_name || "").trim();
+  if (!issueId || !issueNumber || !repositoryId || !repositoryFullName) {
+    return null;
+  }
+
+  return {
+    id: issueId,
+    number: issueNumber,
+    title: String(issue?.title || ""),
+    state: String(issue?.state || "open"),
+    html_url: String(issue?.html_url || ""),
+    created_at: issue?.created_at ? String(issue.created_at) : null,
+    updated_at: issue?.updated_at ? String(issue.updated_at) : null,
+    repository: {
+      id: repositoryId,
+      full_name: repositoryFullName
+    }
+  };
+}
+
+async function fetchIssuesForRepositories(
+  token: string,
+  repos: GitHubRepo[]
+): Promise<GitHubIssueSyncRecord[]> {
+  const issueGroups = await Promise.all(
+    repos.map((repo) => fetchRepositoryIssues(token, repo))
+  );
+  return issueGroups.flat();
+}
+
+async function fetchRepositoryIssues(
+  token: string,
+  repo: GitHubRepo
+): Promise<GitHubIssueSyncRecord[]> {
+  const repositoryId = parsePositiveInteger(repo?.id);
+  const repositoryFullName = String(repo?.full_name || "").trim();
+  const [owner, name] = repositoryFullName.split("/");
+  if (!repositoryId || !owner || !name) {
+    return [];
+  }
+
+  const issues: GitHubIssueSyncRecord[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const response = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues?state=all&per_page=100&page=${page}`,
+      { headers: githubHeaders(token) }
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub issue listing for ${repositoryFullName} returned HTTP ${response.status}.`);
+    }
+
+    const payload = await response.json();
+    const pageItems = Array.isArray(payload) ? payload : [];
+    for (const item of pageItems) {
+      if (item?.pull_request) {
+        continue;
+      }
+      const issueId = parsePositiveInteger(item?.id);
+      const issueNumber = parsePositiveInteger(item?.number);
+      if (!issueId || !issueNumber) {
+        continue;
+      }
+      issues.push({
+        id: issueId,
+        number: issueNumber,
+        title: String(item?.title || ""),
+        state: String(item?.state || "open"),
+        html_url: String(item?.html_url || ""),
+        created_at: item?.created_at ? String(item.created_at) : null,
+        updated_at: item?.updated_at ? String(item.updated_at) : null,
+        repository: {
+          id: repositoryId,
+          full_name: repositoryFullName
+        }
+      });
+    }
+
+    if (pageItems.length < 100) {
+      break;
+    }
+  }
+  return issues;
 }
 
 function githubHeaders(token: string) {
@@ -538,6 +694,37 @@ async function updateUserProjectsIfVersionMatches({
       headers: { Prefer: "return=representation" },
       body: JSON.stringify({
         projects,
+        version: expectedVersion + 1,
+        updated_at: new Date().toISOString()
+      })
+    }
+  );
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function getUserTasks(userId: string) {
+  const rows = await adminJson(
+    `/rest/v1/user_tasks?user_id=eq.${encodeURIComponent(userId)}&select=tasks,version`
+  );
+  return Array.isArray(rows) ? rows[0] || null : null;
+}
+
+async function updateUserTasksIfVersionMatches({
+  userId,
+  expectedVersion,
+  tasks
+}: {
+  userId: string;
+  expectedVersion: number;
+  tasks: unknown[];
+}) {
+  const rows = await adminJson(
+    `/rest/v1/user_tasks?user_id=eq.${encodeURIComponent(userId)}&version=eq.${expectedVersion}&select=version`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        tasks,
         version: expectedVersion + 1,
         updated_at: new Date().toISOString()
       })
