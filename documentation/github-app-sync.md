@@ -58,6 +58,13 @@ The webhook endpoint verifies GitHub's `X-Hub-Signature-256` HMAC before process
 
 A scheduled `reconcile-all` call should also run periodically as a failsafe after `GITHUB_SYNC_CRON_SECRET` is configured. A daily schedule is sufficient initially.
 
+## Production verification
+
+- GitHub App installation `159523918` is linked to the Ariadne owner account.
+- The first server-side reconciliation completed successfully with `sync_status=ok`.
+- The reconciler produced the expected eight GitHub-backed projects in `user_projects` without using the legacy manual sync button.
+- This documentation commit is intentionally used as the first post-link `push` webhook test.
+
 ## Migration cutoff
 
 Do not remove the current browser OAuth/manual `Sync GitHub Repos` implementation until all of the following have been verified:
