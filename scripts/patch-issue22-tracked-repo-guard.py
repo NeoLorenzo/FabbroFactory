@@ -27,7 +27,7 @@ helper = '''async function isTrackedRepositoryForUser(userId: string, repository
   const row = await getUserProjects(userId);
   const projects = Array.isArray(row?.projects) ? row.projects : [];
   const expectedProjectId = `${GITHUB_PROJECT_PREFIX}${repositoryId}`;
-  return projects.some((project) =>
+  return projects.some((project: unknown) =>
     Boolean(project) &&
     typeof project === "object" &&
     String((project as Record<string, unknown>).id || "") === expectedProjectId
