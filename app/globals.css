@@ -5339,3 +5339,46 @@ textarea.task-editor-subtask-title {
   }
 }
 
+
+
+/* GitHub-backed Ariadne tasks */
+.task-card.is-github-issue {
+  border-color: rgba(74, 222, 128, 0.42);
+  box-shadow: inset 3px 0 0 rgba(74, 222, 128, 0.72);
+}
+
+.task-card.is-github-issue:hover {
+  border-color: rgba(74, 222, 128, 0.62);
+}
+
+.task-card-github-source,
+.task-editor-github-source {
+  color: rgba(134, 239, 172, 0.9);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.task-card-github-source:hover,
+.task-editor-github-source:hover {
+  color: #bbf7d0;
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
+}
+
+.task-editor-github-source {
+  width: fit-content;
+  margin-top: 0.16rem;
+}
+
+.task-card.is-github-issue .task-list-completion:disabled,
+.task-editor-completion:disabled {
+  cursor: default;
+  opacity: 0.78;
+}
+
+.task-editor-title-input[readonly] {
+  cursor: default;
+}

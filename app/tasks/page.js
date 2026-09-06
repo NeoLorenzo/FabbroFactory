@@ -21,7 +21,7 @@ import {
   purgeExpiredTaskTombstones,
   restoreDeletedTask
 } from "@/lib/tasks/taskTombstones";
-import { createTaskSignatureMap, getTaskSyncSignature, mergeTaskSnapshots, reconcileTaskSnapshots, sanitizeSubtaskList, sanitizeTask, sanitizeTaskList } from "@/lib/tasks/reconcile";
+import { createTaskSignatureMap, getTaskSyncSignature, isGitHubIssueTask, mergeTaskSnapshots, reconcileTaskSnapshots, sanitizeSubtaskList, sanitizeTask, sanitizeTaskList } from "@/lib/tasks/reconcile";
 import { createTaskWriteCoordinator } from "@/lib/tasks/writeCoordinator";
 
 const TASK_STORAGE_KEY = "fabbro_tasks_v1";
@@ -1008,7 +1008,8 @@ export default function TasksPage() {
   };
 
   const saveTask = () => {
-    const title = form.title.trim();
+    const isEditingGitHubIssue = isGitHubIssueTask(editingTask);
+    const title = isEditingGitHubIssue ? String(editingTask?.title || "").trim() : form.title.trim();
     if (!title) {
       setTaskFormError("Title is required.");
       return;
@@ -1021,7 +1022,7 @@ export default function TasksPage() {
     }
 
     const nextTaskShape = {
-      completed: Boolean(form.completed),
+      completed: isEditingGitHubIssue ? Boolean(editingTask?.completed) : Boolean(form.completed),
       title,
       description: form.description.trim(),
       dueDate: normalizeDateInput(form.dueDate),
@@ -1113,6 +1114,9 @@ export default function TasksPage() {
     }
 
     const removedTask = tasks[removedTaskIndex];
+    if (isGitHubIssueTask(removedTask)) {
+      return;
+    }
     const deletedAt = Date.now();
     setTasks((currentTasks) => currentTasks.map((task) =>
       task.id === taskId ? markTaskDeleted(task, deletedAt) : task
@@ -1169,6 +1173,7 @@ export default function TasksPage() {
   };
 
   const duplicateTask = (task) => {
+    if (isGitHubIssueTask(task)) return;
     const now = Date.now();
     setTasks((currentTasks) => [
       ...currentTasks,
@@ -1268,11 +1273,14 @@ export default function TasksPage() {
   ));
 
   const toggleTaskCompleted = (taskId) => setTasks((currentTasks) => currentTasks.map((task) =>
-    task.id === taskId ? { ...task, completed: !task.completed, updatedAt: Date.now() } : task
+    task.id === taskId && !isGitHubIssueTask(task)
+      ? { ...task, completed: !task.completed, updatedAt: Date.now() }
+      : task
   ));
 
   const renderTaskCard = (task) => {
     const directionalGoalId = getDirectionalGoalId(task);
+    const githubBacked = isGitHubIssueTask(task);
     const priorityScore = calculatePriorityScore(task);
     const priorityBand = getPriorityScoreBand(priorityScore);
     const timePressureRatio =
@@ -1298,8 +1306,8 @@ export default function TasksPage() {
       <article
         key={task.id}
         className={`task-card priority-band-${priorityBand}${directionalGoalId ? " is-directional-goal" : ""}${
-          isMobileExperience ? " task-card-mobile-editable" : ""
-        }`}
+          githubBacked ? " is-github-issue" : ""
+        }${isMobileExperience ? " task-card-mobile-editable" : ""}`}
         onClick={() => startEditTask(task)}
         onKeyDown={
           (event) => {
@@ -1316,11 +1324,26 @@ export default function TasksPage() {
           type="button"
           className={`task-list-completion${task.completed ? " is-complete" : ""}`}
           onClick={(event) => { event.stopPropagation(); toggleTaskCompleted(task.id); }}
-          aria-label={task.completed ? "Mark task incomplete" : "Mark task complete"}
+          disabled={githubBacked}
+          title={githubBacked ? "Completion is managed by the GitHub issue state" : undefined}
+          aria-label={githubBacked ? "Completion managed by GitHub" : task.completed ? "Mark task incomplete" : "Mark task complete"}
         >{task.completed ? "✓" : ""}</button>
         <div className={`task-card-content${task.completed ? " is-complete" : ""}`}>
         <header className="task-card-header">
           <h4 className="task-card-title">{task.title}</h4>
+          {githubBacked && task.githubIssueUrl ? (
+            <a
+              className="task-card-github-source"
+              href={task.githubIssueUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open ${task.githubRepositoryFullName || "GitHub"} #${task.githubIssueNumber || ""}`}
+              aria-label={`Open GitHub issue ${task.githubIssueNumber || ""}`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              ↗ #{task.githubIssueNumber || ""}
+            </a>
+          ) : null}
           {directionalGoalId ? (
             <span className="task-card-goal-tag">D · Directional</span>
           ) : priorityScore > 0 ? (
@@ -1334,12 +1357,12 @@ export default function TasksPage() {
             aria-label={taskSyncBadge.label}
           />
           <div className="task-card-actions">
-            {!isMobileExperience ? (
+            {!isMobileExperience && !githubBacked ? (
               <button type="button" className="task-card-btn" title="Duplicate" aria-label="Duplicate task" onClick={(event) => { event.stopPropagation(); duplicateTask(task); }}>
                 ⧉
               </button>
             ) : null}
-            {!isMobileExperience ? (
+            {!isMobileExperience && !githubBacked ? (
               <button
                 type="button"
                 className="task-card-btn task-card-btn-danger"
@@ -1467,7 +1490,14 @@ export default function TasksPage() {
               />
               <ModalShell as="form" className="task-editor-modal task-editor-floating-form" onSubmit={onSubmit}>
                   <header className="task-editor-content-header ff-modal-header">
-                    <button type="button" className={`task-editor-completion${form.completed ? " is-complete" : ""}`} onClick={() => setForm((current) => ({ ...current, completed: !current.completed }))} aria-label={form.completed ? "Mark task incomplete" : "Mark task complete"}>{form.completed ? "✓" : ""}</button>
+                    <button
+                      type="button"
+                      className={`task-editor-completion${form.completed ? " is-complete" : ""}`}
+                      onClick={() => setForm((current) => ({ ...current, completed: !current.completed }))}
+                      disabled={isGitHubIssueTask(editingTask)}
+                      title={isGitHubIssueTask(editingTask) ? "Completion is managed by GitHub" : undefined}
+                      aria-label={isGitHubIssueTask(editingTask) ? "Completion managed by GitHub" : form.completed ? "Mark task incomplete" : "Mark task complete"}
+                    >{form.completed ? "✓" : ""}</button>
                     <div className="task-editor-main-content">
                     <textarea
                       id="task-title"
@@ -1482,7 +1512,19 @@ export default function TasksPage() {
                       placeholder="Write task title"
                       rows={1}
                       required
+                      readOnly={isGitHubIssueTask(editingTask)}
+                      aria-readonly={isGitHubIssueTask(editingTask)}
                     />
+                    {isGitHubIssueTask(editingTask) && editingTask?.githubIssueUrl ? (
+                      <a
+                        className="task-editor-github-source"
+                        href={editingTask.githubIssueUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {editingTask.githubRepositoryFullName || "GitHub"} #{editingTask.githubIssueNumber || ""} ↗
+                      </a>
+                    ) : null}
                     <textarea
                       ref={descriptionRef}
                       id="task-description"
