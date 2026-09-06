@@ -18,15 +18,14 @@ ownership boundaries.
 - Local-first project and task data with authenticated cloud synchronization
 - PWA support and static deployment through GitHub Pages
 
-## Kleos extraction status
+## Kleos boundary
 
-GOAT Lab has been extracted into Kleos as an independent application. The existing Ariadne `/lab`
-route is retained temporarily as a migration fallback until the production Kleos Google OAuth path
-and representative private-data workflows have been confirmed interactively. It is not part of
-Ariadne's long-term product scope.
+Personal measurement and benchmarking are fully owned by the separate
+[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos) application. Ariadne no longer exposes
+or contains the former GOAT Lab application surface.
 
-Existing `goat_*` tables remain physically located in the shared Supabase project. Their schema,
-RLS policy definitions, and future persistence changes are now owned by the Kleos repository.
+Existing `goat_*` records remain physically located in the shared Supabase project. Their schema,
+RLS policy definitions, application logic, and future persistence changes are owned by Kleos.
 
 ## Tech stack
 
@@ -70,9 +69,8 @@ persistence. The schema provides:
 - count-based outcome goals, bare-minimum thresholds, automatic deadline outcomes, and user-managed revisions
 
 Kleos-owned `goat_*` persistence is documented and maintained in
-[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos/tree/main/supabase). During the migration
-window, compatibility definitions may still remain in Ariadne's schema file; they should not be
-used as the source of truth for future Kleos changes.
+[`NeoLorenzo/Kleos`](https://github.com/NeoLorenzo/Kleos/tree/main/supabase). Ariadne intentionally
+excludes Kleos persistence definitions from its own schema; the Kleos repository is the source of truth.
 
 All private tables use row-level security keyed by authenticated ownership.
 

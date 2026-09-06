@@ -8,7 +8,6 @@ import { useIsMobileExperience } from "@/lib/device/useIsMobileExperience";
 const NAV_ITEMS = [
   { key: "dashboard", href: "/", label: "Dashboard", icon: "dashboard" },
   { key: "tasks", href: "/tasks", label: "Tasks", icon: "tasks" },
-  { key: "lab", href: "/lab", label: "Lab", icon: "lab" }
 ];
 
 export default function AppShell({ activeNavItem = "", hideMobileNav = false, children }) {
@@ -154,16 +153,6 @@ function NavIcon({ icon }) {
       <svg {...commonProps}>
         <path d="M9 7h10M9 12h10M9 17h10" />
         <path d="m4.2 7 1.3 1.3 2.2-2.2M4.2 12 5.5 13.3 7.7 11.1M4.2 17 5.5 18.3 7.7 16.1" />
-      </svg>
-    );
-  }
-
-  if (icon === "lab") {
-    return (
-      <svg {...commonProps}>
-        <path d="M10 4.5v5.2l-4.3 7.5a1.6 1.6 0 0 0 1.4 2.4h9.8a1.6 1.6 0 0 0 1.4-2.4L14 9.7V4.5" />
-        <path d="M8.5 4.5h7" />
-        <path d="M8.4 15.3h7.2" />
       </svg>
     );
   }
