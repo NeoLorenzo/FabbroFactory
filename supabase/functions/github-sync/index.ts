@@ -155,6 +155,9 @@ async function handleWebhook(request: Request, event: string) {
     if (!issueRecord) {
       return jsonResponse({ ok: true, ignored: "Issue webhook payload was incomplete." });
     }
+    if (!(await isTrackedRepositoryForUser(integration.user_id, issueRecord.repository.id))) {
+      return jsonResponse({ ok: true, ignored: "Issue repository is not tracked by Ariadne." });
+    }
     await reconcileTasksForUser(integration.user_id, [issueRecord]);
     return jsonResponse({
       ok: true,
@@ -237,6 +240,17 @@ async function reconcileIntegration(integration: Integration) {
     }).catch(() => null);
     throw error;
   }
+}
+
+async function isTrackedRepositoryForUser(userId: string, repositoryId: number) {
+  const row = await getUserProjects(userId);
+  const projects = Array.isArray(row?.projects) ? row.projects : [];
+  const expectedProjectId = `${GITHUB_PROJECT_PREFIX}${repositoryId}`;
+  return projects.some((project: unknown) =>
+    Boolean(project) &&
+    typeof project === "object" &&
+    String((project as Record<string, unknown>).id || "") === expectedProjectId
+  );
 }
 
 async function reconcileTasksForUser(userId: string, issues: GitHubIssueSyncRecord[]) {
