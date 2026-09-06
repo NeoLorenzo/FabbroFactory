@@ -108,7 +108,11 @@ The Tasks UI treats GitHub-backed tasks as first-class tasks for sorting and pri
 
 ### Real-time path
 
-The webhook endpoint verifies GitHub's `X-Hub-Signature-256` HMAC before processing events. Repository, push, and issue events trigger a full installation reconciliation. The issue event therefore covers open, edit, close, reopen, and other GitHub issue changes using one idempotent path.
+The webhook endpoint verifies GitHub's `X-Hub-Signature-256` HMAC before processing events.
+
+Repository and push events trigger a full installation reconciliation. GitHub `issues` events are handled directly from the verified webhook payload so creation, title edits, close, and reopen can update the relevant Ariadne task immediately without waiting for GitHub's repository issue-list endpoint to become consistent.
+
+This direct issue-event path is important because a newly-created issue webhook can arrive before GitHub's subsequent `GET /issues` listing exposes the new issue. Using the signed webhook payload avoids that race while retaining the full reconciliation path as a failsafe.
 
 ### Reconciliation failsafe
 
@@ -130,7 +134,17 @@ Repository synchronization verified in production on 2026-09-06:
 - The scheduled reconciliation request returned HTTP 200 and reconciled all eight repositories successfully using the rotated cron secret.
 - The cron job `github-sync-reconcile-all` is active on a six-hour schedule.
 
-GitHub issue synchronization must receive its own production lifecycle verification after the existing GitHub App installation is granted Issues read-only permission and the Issues webhook event is enabled. The verification should cover initial import, title edit, close, reopen, duplicate prevention, and a full-reconciliation repair.
+GitHub issue synchronization was also verified in production on 2026-09-06:
+
+- the initial full reconciliation imported 36 open issues from the tracked repositories into `user_tasks`;
+- a real issue creation exposed an eventual-consistency race in the original full-reconcile-on-webhook approach, which was then fixed by consuming the signed issue webhook payload directly;
+- after deploying the direct webhook path, a newly-created issue appeared immediately as a new `github-issue-<id>` task without a manual reconciliation;
+- a live issue title edit updated the same Ariadne task;
+- closing the issue marked the same Ariadne task completed and `githubIssueState=closed`;
+- reopening the issue reactivated the same task and returned `githubIssueState=open`;
+- duplicate checks confirmed exactly one Ariadne task per tested GitHub issue;
+- a subsequent full `reconcile-all` run left the `user_tasks.version` unchanged when no task data had drifted, confirming idempotent recovery behavior;
+- temporary verification issues were closed after the lifecycle test.
 
 ## Legacy path removed
 
